@@ -2,6 +2,7 @@
 #include "Engine.h"
 #include "ResourceManager.h"
 #include "StateMachine.h"
+#include "ScriptingSystem.h"
 #include "Primitives.h"
 
 using namespace std;
@@ -9,6 +10,7 @@ using namespace std;
 unique_ptr<Engine>           g_Engine;
 unique_ptr<ResourceManager>  g_ResourceManager;
 unique_ptr<StateMachine>     g_StateMachine;
+unique_ptr<ScriptingSystem>  g_ScriptingSystem;
 
 //  These functions only return true if the mouse is in the rectangle and no mouse button is clicked or held.
 bool IsMouseInRect(int x, int y, int w, int h)
@@ -82,7 +84,11 @@ void DrawStringCentered(Font* font, float fontsize, char* text, Vector2 center, 
 	center.x -= dims.x / 2;
 	center.y -= dims.y / 2;
 
-	DrawTextEx(*font, text, center, fontsize, 1, color);
+	//  Make sure we're on a whole pixel.
+	int centerx = int(center.x);
+	int centery = int(center.y);
+
+	DrawTextEx(*font, text, {float(centerx), float(centery)}, fontsize, 1, color);
 }
 
 void DrawStringRight(Font* font, float fontsize, std::string text, float rightx, float y, Color color)

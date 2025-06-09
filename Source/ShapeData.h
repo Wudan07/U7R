@@ -39,6 +39,8 @@ enum class ShapeDrawType
 	OBJECT_DRAW_FLAT,
 	OBJECT_DRAW_CUSTOM_MESH,
 	OBJECT_DRAW_CHARACTER,
+	OBJECT_DRAW_USE_SHAPE_POINTER,
+	OBJECT_DRAW_DONT_DRAW,
 	OBJECT_DRAW_LAST
 };
 
@@ -64,15 +66,13 @@ public:
 	void SetupDrawTypes();
 	void FixupTextures();
 
-	int CalculateAnimFrames();
-
 	void Serialize(std::ofstream& outputStream );
 	void Deserialize(std::ifstream& inputStream);
 
 	void Draw(const Vector3& pos, float angle, Color color = Color{ 255, 255, 255, 255 }, Vector3 scaling =  Vector3{ 1, 1, 1 });
 
 	bool IsValid() { return m_isValid; }
-
+	void SetPixelOffset(int offsetX, int offsetY);
 	void CreateDefaultTexture();
 
 	void SetDefaultTexture(Image image);
@@ -119,12 +119,13 @@ public:
 	int m_rightTextureWidth;
 	int m_rightTextureHeight;
 
+	int m_pixelOffsetX;
+	int m_pixelOffsetY;
+
 	bool m_isValid;
 
 	int m_shape;
 	int m_frame;
-	bool m_isAnimated;
-	int m_frameCount;
 
 	int m_pointerShape;
 	int m_pointerFrame;
@@ -175,6 +176,8 @@ public:
 	RaylibModel* m_customMesh = nullptr;
 
 	bool m_meshOutline = true;
+
+	std::string m_luaScript;
 };
 
 #endif

@@ -3,9 +3,17 @@
 #include "Geist/ResourceManager.h"
 #include "Geist/StateMachine.h"
 #include "Geist/Config.h"
+#include "Geist/ScriptingSystem.h"
 #include "U7Globals.h"
 #include "U7Object.h"
 #include "ShapeData.h"
+#include "LoadingState.h"
+
+#include <iostream>
+#include <string>
+#include <sstream>
+#include <format>
+#include <iomanip>
 
 using namespace std;
 
@@ -14,7 +22,7 @@ U7Object::~U7Object()
    Shutdown();
 }
 
-void U7Object::Init(const string& configfile, int unitType, int frame, int frameCount)
+void U7Object::Init(const string& configfile, int unitType, int frame)
 {
    m_Pos = Vector3{ 0, 0, 0 };
    m_Dest = Vector3{ 0, 0, 0 };
@@ -38,12 +46,8 @@ void U7Object::Init(const string& configfile, int unitType, int frame, int frame
    m_isEgg = false;
    m_hasGump = false;
    m_inventory.clear();
-   m_frameCount = 1;
-   ObjectData* objectData = &g_objectTable[m_shapeData->GetShape()];
-   m_isAnimated = objectData->m_isAnimated;
-   m_frameCount = frameCount;
-   //m_isAnimated = false;
-   //m_frameCount = m_shapeData->CalculateAnimFrames();
+   m_hasConversationTree = false;
+   m_GumpPos = Vector2{ 0, 0 };
 }
 
 void U7Object::Draw()
@@ -66,20 +70,7 @@ void U7Object::Draw()
 
 void U7Object::Update()
 {
-	if (m_isAnimated) {
-		if (m_frameCount > 1) {
-			if ((m_Frame % m_frameCount) == GetGlobalAnimationFrame(m_frameCount)) {
-				m_Visible = true;
-			}
-			else
-			{
-				m_Visible = false;
-			}
-		}
-		else {
-			m_Visible = true;
-		}
-	}
+
 }
 
 void U7Object::Attack(int _UnitID)
@@ -94,10 +85,7 @@ void U7Object::Shutdown()
 
 void U7Object::SetPos(Vector3 pos)
 {
-	m_Pos = pos;
-	m_DrawPos = pos;
-	m_chunkOwn[0] = int(m_Pos.x / 16);
-	m_chunkOwn[1] = int(m_Pos.z / 16);
+   m_Pos = pos;
 
    Vector3 dims = Vector3{ 0, 0, 0 };
    Vector3 boundingBoxAnchorPoint = Vector3{ 0, 0, 0 };
@@ -123,20 +111,20 @@ void U7Object::SetPos(Vector3 pos)
    m_boundingBox = { boundingBoxAnchorPoint, Vector3Add(boundingBoxAnchorPoint, dims) };
 }
 
-void U7Object::SetDrawPos(Vector3 pos)
+float U7Object::Pick()
 {
-	m_DrawPos = pos;
-}
-
-bool U7Object::Pick()
-{
-   bool picked = false;
-
    Ray ray = GetMouseRay(GetMousePosition(), g_camera);
 
    RayCollision collision = GetRayCollisionBox(ray, m_boundingBox);
 
-   return collision.hit;
+   if(collision.hit)
+   {
+      return collision.distance;
+   }
+   else
+   {
+      return -1;
+   }
 }
 
 void U7Object::SetDest(Vector3 dest)
@@ -169,6 +157,60 @@ bool U7Object::RemoveObjectFromInventory(int objectid)
             m_inventory.erase(m_inventory.begin() + i);
             return true;
          }
+      }
+   }
+
+   return false;
+}
+
+void U7Object::Interact(int event)
+{
+   if(m_hasConversationTree)
+   {
+      g_ConversationState->SetNPC(m_NPCID);
+
+      string scriptName = "func_04";
+
+      stringstream ss;
+      ss << std::setw(2) << std::setfill('0') << std::hex << std::uppercase << m_NPCID;
+
+      scriptName += ss.str();
+
+      g_ConversationState->SetLuaFunction(scriptName);
+
+      AddConsoleString(g_ScriptingSystem->CallScript(scriptName, {event, m_NPCID}));  
+   }
+   else
+   {
+      AddConsoleString(g_ScriptingSystem->CallScript(m_shapeData->m_luaScript, { event, m_ID }));
+   }
+}
+
+bool U7Object::IsInInventory(int objectid)
+{
+   for (int i = 0; i < m_inventory.size(); i++)
+   {
+      if (m_inventory[i] == objectid)
+      {
+         return true;
+      }
+   }
+
+   return false;
+}
+
+bool U7Object::IsInInventory(int shape, int frame)
+{
+   for (int i = 0; i < m_inventory.size(); i++)
+   {
+      if(GetObjectFromID(m_inventory[i])->m_shapeData->m_shape == shape &&
+         GetObjectFromID(m_inventory[i])->m_shapeData->m_frame == frame)
+      {
+         return true;
+      }
+      else
+      {
+         return true;
       }
    }
 

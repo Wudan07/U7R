@@ -1019,23 +1019,14 @@ void GuiTextArea::Draw()
 	}
 	else if (m_Justified == GuiTextArea::CENTERED)
 	{
-		if (MeasureTextEx(*m_Font, m_String.c_str(), m_Font->baseSize, 1).x < m_Width)
+		if (m_Width == 0 || MeasureTextEx(*m_Font, m_String.c_str(), m_Font->baseSize, 1).x < m_Width)
 		{
 			int textlength = MeasureTextEx(*m_Gui->m_Font.get(), m_String.c_str(), m_Font->baseSize, 1).x;
 
 			//DrawRectangle(int(m_Gui->m_Pos.x + ((m_Pos.x + (m_Width / 2)))) - (m_Width / 2), int(m_Gui->m_Pos.y + (m_Pos.y)), m_Width, m_Font->height, Color(.5, 0, 0, .75), true);
 			if (m_Shadowed)
-				DrawStringCentered(m_Font, m_Font->baseSize, m_String, int(m_Gui->m_Pos.x + ((m_Pos.x + 2 + (m_Width / 2)))), int(m_Gui->m_Pos.y + ((m_Pos.y + 2))), Color{ 0, 0, 0, 255 });
+				DrawStringCentered(m_Font, m_Font->baseSize, m_String, int(m_Gui->m_Pos.x + ((m_Pos.x + (m_Width / 2))) + (m_Font->baseSize * .125)), int(m_Gui->m_Pos.y + (m_Pos.y) + (m_Font->baseSize * .125)), Color{ 0, 0, 0, 255 });
 			DrawStringCentered(m_Font, m_Font->baseSize, m_String, int(m_Gui->m_Pos.x + ((m_Pos.x + (m_Width / 2)))), int(m_Gui->m_Pos.y + (m_Pos.y)), m_Color);
-		}
-		else
-		{
-			int textlength = MeasureTextEx(*m_Gui->m_Font.get(), m_String.c_str(), m_Font->baseSize, 1).x;
-
-			//DrawRectangle(int(m_Gui->m_Pos.x + ((m_Pos.x + (m_Width / 2))) - textlength / 2), int(m_Gui->m_Pos.y + (m_Pos.y)), m_Width, m_Font->height, Color(.5, 0, 0, .75), true);
-			//if (m_Shadowed)
-			//	m_Font->DrawParagraphCentered(m_String, int(m_Gui->m_Pos.x + ((m_Pos.x + (m_Width / 2)))), int(m_Gui->m_Pos.y + (m_Pos.y)), m_Width, m_Font->height, Color{ 0, 0, 0, 255 });
-			//m_Font->DrawParagraphCentered(m_String, int(m_Gui->m_Pos.x + ((m_Pos.x + (m_Width / 2)))), int(m_Gui->m_Pos.y + (m_Pos.y)), m_Width, m_Font->height, m_Color);
 		}
 	}
 	else
@@ -1094,7 +1085,7 @@ void GuiSprite::Draw()
 	if (m_Sprite && m_Active && m_Visible)
 	{
 		m_Sprite->DrawScaled(Rectangle{ m_Gui->m_Pos.x + int(m_Pos.x), m_Gui->m_Pos.y + int(m_Pos.y),
-			m_Width, m_Height }, Vector2{ 0, 0 }, 0, m_Color);
+			m_Width * m_ScaleX, m_Height * m_ScaleY }, Vector2{ 0, 0 }, 0, m_Color);
 	}
 }
 
@@ -1320,17 +1311,19 @@ void GuiStretchButton::Update()
 	if (m_Visible && m_Active)
 	{
 		//  Stretch buttons activate on button down, so there is no "hot" state.
-		if (IsLeftButtonDownInRect({ (m_Gui->m_Pos.x + int(m_Pos.x)) * m_Gui->m_InputScale,
-			(m_Gui->m_Pos.y + int(m_Pos.y)) * m_Gui->m_InputScale,
-			m_Width * m_Gui->m_InputScale,
-			m_Height * m_Gui->m_InputScale }))
-		{
-			m_Hovered = false;
-			m_Down = true;
-			m_Clicked = false; // Not clicked until the button is released.
-			m_Gui->m_ActiveElement = m_ID;
-		}
-		else if (WasLeftButtonClickedInRect(Rectangle{ (m_Gui->m_Pos.x + int(m_Pos.x)) * m_Gui->m_InputScale,
+		// if (IsLeftButtonDownInRect({ (m_Gui->m_Pos.x + int(m_Pos.x)) * m_Gui->m_InputScale,
+		// 	(m_Gui->m_Pos.y + int(m_Pos.y)) * m_Gui->m_InputScale,
+		// 	m_Width * m_Gui->m_InputScale,
+		// 	m_Height * m_Gui->m_InputScale }))
+		// {
+		// 	m_Hovered = false;
+		// 	m_Down = true;
+		// 	m_Clicked = false; // Not clicked until the button is released.
+		// 	m_Gui->m_ActiveElement = m_ID;
+		// }
+		// else
+		
+		if (WasLeftButtonClickedInRect(Rectangle{ (m_Gui->m_Pos.x + int(m_Pos.x)) * m_Gui->m_InputScale,
 			(m_Gui->m_Pos.y + int(m_Pos.y)) * m_Gui->m_InputScale,
 			m_Width * m_Gui->m_InputScale,
 			m_Height * m_Gui->m_InputScale }))

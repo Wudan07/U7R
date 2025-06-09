@@ -103,6 +103,8 @@ void Terrain::Init()
 		m_chunkModels[i] = make_unique<Model>(LoadModelFromMesh(mesh));
 
       Image img = GenImageColor(128, 128, BLACK);
+	  int largeCount = 0;
+	  int largeShapes[16][4];
       for (int j = 0; j < 16; ++j)
       {
          for (int k = 0; k < 16; ++k)
@@ -119,10 +121,57 @@ void Terrain::Init()
             }
             else
             {
+				bool drawLast = true;
+				ShapeData& m_shapeData = g_shapeTable[shapenum][framenum];
+				if (m_shapeData.m_isValid == true) {
+					ObjectData& objectData = g_objectTable[m_shapeData.GetShape()];
+					if (objectData.m_height == 0) {
+						drawLast = false;
+						// ok let's add this shape to this texture
+						printf("TerrainTexture: %d %d is flat\n", shapenum, framenum);
+						if (largeCount < 16) {
+							largeShapes[largeCount][0] = shapenum;
+							largeShapes[largeCount][1] = framenum;
+							largeShapes[largeCount][2] = k * 8;
+							largeShapes[largeCount][3] = j * 8;
+							largeCount += 1;
+						}
+					}
+				}
+				else {
+					printf("TerrainTexture: %d %d is not valid\n", shapenum, framenum);
+				}
+				if (drawLast == true) {
 					ImageDraw(&img, m_terrainTexture, Rectangle{ prevShape * 8.0f, prevFrame * 8.0f, 8, 8 }, Rectangle{ k * 8.0f, j * 8.0f, 8, 8 }, WHITE);
 				}
 			}
+		}
       }
+
+	  int largeKeep = 0;
+	  while (largeKeep < largeCount) {
+		  int shapenum = largeShapes[largeKeep][0];
+		  int framenum = largeShapes[largeKeep][1];
+		  int xPos = largeShapes[largeKeep][2];
+		  int yPos = largeShapes[largeKeep][3];
+		  ShapeData& m_shapeData = g_shapeTable[shapenum][framenum];
+		  //RLAPI void ImageDraw(Image *dst, Image src, Rectangle srcRec, Rectangle dstRec, Color tint);             // Draw a source image within a destination image (tint applied to source)
+		  float dstPosX = float(xPos - m_shapeData.m_pixelOffsetX) + 8.0f;
+		  float dstPosY = float(yPos - m_shapeData.m_pixelOffsetY) + 8.0f;
+		  //float dstPosX = float(xPos);// - m_shapeData.m_pixelOffsetX) + 8.0f;
+		  //float dstPosY = float(yPos);// - m_shapeData.m_pixelOffsetY) + 8.0f;
+		  printf("TerrainTexture: Large %d %d to draw at %d %d (%d %d pos %2.2f %2.2f)\n", shapenum, framenum, xPos, yPos, m_shapeData.m_pixelOffsetX, m_shapeData.m_pixelOffsetY, dstPosX, dstPosY);
+		  ImageDraw(&img,
+			  m_shapeData.m_originalTexture->m_OriginalImage,
+			  Rectangle{ 0, 0, float(m_shapeData.m_originalTexture->width), float(m_shapeData.m_originalTexture->height) },
+			  Rectangle{
+				  dstPosX,
+				  dstPosY,
+				  float(m_shapeData.m_originalTexture->width),
+				  float(m_shapeData.m_originalTexture->height) },
+				  WHITE);
+		  largeKeep += 1;
+	  }
 
       Texture thisTexture = LoadTextureFromImage(img);
       SetTextureFilter(thisTexture, TEXTURE_FILTER_POINT);
@@ -299,7 +348,7 @@ void Terrain::FindVisibleChunks()
 	Vector3 vecRGT = { viewMat.m0, viewMat.m4, viewMat.m8 };
 	Vector3 vecUP = { viewMat.m1, viewMat.m5, viewMat.m9 };
 	float foView = 1.7777777777777777777777777777778 * g_camera.fovy;
-	float halfFOVy = DEG2RAD((g_camera.fovy * 0.75f));
+	float halfFOVy = DEG2RAD * (g_camera.fovy * 0.75f);
 	float cosHalfFOVy = cos(halfFOVy);
 	float tanHalfFOVy = tan(halfFOVy);
 	float chunkYD = m_chunkRadius / cosHalfFOVy;
@@ -307,7 +356,7 @@ void Terrain::FindVisibleChunks()
 	float schunkYD = m_schunkRadius / cosHalfFOVy;
 	float schunkYH = 0.0f;
 
-	float halfFOVz = DEG2RAD((foView * 0.5f));
+	float halfFOVz = DEG2RAD * (foView * 0.5f);
 	float cosHalfFOVz = cos(halfFOVz);
 	float tanHalfFOVz = tan(halfFOVz);
 	float chunkZD = m_chunkRadius / cosHalfFOVz;

@@ -17,12 +17,15 @@
 
 #include "Geist/Primitives.h"
 #include "Geist/RNG.h"
+#include "ConversationState.h"
 #include "Terrain.h"
 #include "ShapeData.h"
 #include "U7Object.h"
 #include "raylib.h"
 #include "raymath.h"
+#include "U7Player.h"
 
+//class ConversationState;
 
 struct coords
 {
@@ -39,7 +42,7 @@ enum GameStates
 	STATE_OBJECTEDITORSTATE,
 	STATE_WORLDEDITORSTATE,
 	STATE_CREDITS,
-        STATE_CONVERSATIONSTATE,
+    STATE_CONVERSATIONSTATE,
 	STATE_LASTSTATE
 };
 
@@ -54,9 +57,9 @@ enum class ObjectTypes
 	OBJECT_WEAPON,
 	OBJECT_ARMOR,
 	OBJECT_CONTAINER,
-	OBJECT_QUEST_ITEM,
+	OBJECT_QUESTobject_,
 	OBJECT_KEY,
-	OBJECT_ITEM
+	OBJECTobject_
 };
 
 enum class EngineModes
@@ -99,6 +102,53 @@ struct ObjectData
 	std::unique_ptr<Mesh> m_mesh = nullptr;
 };
 
+struct NPCData
+{
+   unsigned char x;
+   unsigned char y;
+   unsigned short shapeId;
+   unsigned short type;
+   unsigned char proba;
+   unsigned short data1;
+   unsigned char lift;
+   unsigned short data2;
+
+
+
+   unsigned short index;
+   unsigned short referent;
+   unsigned short status;
+   unsigned char str;
+   unsigned char dex;
+   unsigned char iq;
+   unsigned char combat;
+   unsigned char activity;
+   unsigned char DAM;
+   char soak1[3];
+   unsigned short status2;
+   unsigned char id;
+   char soak2[2];
+   unsigned int xp;
+   unsigned char training;
+   unsigned short primary;
+   unsigned short secondary;
+   unsigned short oppressor;
+   unsigned short ivrx;
+   unsigned short ivry;
+   unsigned short svrx;
+   unsigned short svry;
+   unsigned short status3;
+   char soak3[5];
+   unsigned char acty;
+   char soak4[29];
+   unsigned char SN;
+   unsigned char V1;
+   unsigned char V2;
+   unsigned char food;
+   char soak5[7];
+   char name[16];
+};
+
 extern std::string g_version;
 
 extern Vector3 g_Gravity;
@@ -107,9 +157,11 @@ extern Texture* g_Cursor;
 
 extern std::shared_ptr<Font> g_Font;
 extern std::shared_ptr<Font> g_SmallFont;
+extern std::shared_ptr<Font> g_ConversationFont;
+extern std::shared_ptr<Font> g_guiFont;
 
 extern float g_fontSize;
-//extern float g_smallFontSize;
+extern float g_guiFontSize;
 
 extern std::unique_ptr<RNG> g_VitalRNG;
 extern std::unique_ptr<RNG> g_NonVitalRNG;
@@ -128,12 +180,20 @@ extern std::vector<U7Object*> g_chunkObjectMap[192][192]; // The objects in each
 
 extern std::array<std::array<ShapeData, 32>, 1024> g_shapeTable;
 extern std::array<ObjectData, 1024> g_objectTable;
+extern std::unordered_map<int, std::unique_ptr<NPCData> > g_NPCData;
 
 extern std::vector<std::shared_ptr<U7Object>> g_sortedVisibleObjects;
 
 extern unsigned int g_minimapSize;
 
+extern std::unique_ptr<U7Player> g_Player;
+
 extern std::vector< std::vector<unsigned short> > g_World;
+
+void DrawOutlinedText(std::shared_ptr<Font> font, const std::string& text, Vector2 position, float fontSize, int spacing, Color color);
+
+void DrawParagraph(std::shared_ptr<Font> font, const std::string& text, Vector2 position, float maxwidth, float fontSize, int spacing, Color color);
+
 
 float GetDistance(float startX, float startZ, float endX, float endZ);
 
@@ -157,7 +217,7 @@ std::vector<std::shared_ptr<U7Object> > GetAllUnitsWithinRange(float x, float y,
 
 Vector3 GetRadialVector(float partitions, float thispartition);
 
-void AddObject(int shapenum, int framenum, int frameCount, int id, float x, float y, float z);
+void AddObject(int shapenum, int framenum, int id, float x, float y, float z);
 
 void AddObjectToContainer(int objectID, int containerID);
 
@@ -165,6 +225,8 @@ unsigned int GetNextID();
 
 bool WasLMBDoubleClicked();
 bool WasRMBDoubleClicked();
+
+void OpenURL(const std::string& url);
 
 //////////////////////////////////////////////////////////////////////////////
 //  CONSOLE
@@ -186,6 +248,10 @@ void AddConsoleString(std::string string, Color color, float starttime);
 void AddConsoleString(std::string string, Color color = Color{ 255, 255, 255, 255 });
 
 void DrawConsole();
+
+//int l_add_dialogue(lua_State* L);
+
+extern ConversationState* g_ConversationState;
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -209,6 +275,7 @@ extern std::shared_ptr<Sprite> g_BoxB;
 extern std::shared_ptr<Sprite> g_BoxBR;
 
 extern std::vector<std::shared_ptr<Sprite> > g_Borders;
+extern std::vector<std::shared_ptr<Sprite> > g_ConversationBorders;
 
 extern std::shared_ptr<Sprite> g_InactiveButtonL;
 extern std::shared_ptr<Sprite> g_InactiveButtonM;
@@ -223,6 +290,12 @@ extern std::shared_ptr<Sprite> g_RightArrow;
 extern std::shared_ptr<Sprite> g_gumpBackground;
 extern std::shared_ptr<Sprite> g_gumpCheckmarkUp;
 extern std::shared_ptr<Sprite> g_gumpCheckmarkDown;
+
+extern std::shared_ptr<Sprite> g_GitHubButton;
+extern std::shared_ptr<Sprite> g_XButton;
+extern std::shared_ptr<Sprite> g_YouTubeButton;
+extern std::shared_ptr<Sprite> g_PatreonButton;
+extern std::shared_ptr<Sprite> g_KoFiButton;
 
 extern Color g_Red;
 extern Color g_Blue;
@@ -256,9 +329,6 @@ extern float g_cameraDistance; // distance from target
 extern float g_cameraRotation; // angle around target
 
 extern EngineModes g_engineMode;
-
-void DoGlobalAnimationFramesUpdate();
-int GetGlobalAnimationFrame(int frameCount);
 
 void RecalculateCamera();
 

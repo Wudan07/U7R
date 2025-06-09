@@ -5,10 +5,12 @@
 #include "Geist/BaseUnits.h"
 #include <string>
 #include <list>
+#include "lua.h"
 
 enum class ObjectTypes;
 enum class ShapeDrawType;
 class ShapeData;
+struct NPCData;
 
 class U7Object : public Unit3D
 {
@@ -18,7 +20,7 @@ public:
    U7Object() {};
    virtual ~U7Object();
 
-   virtual void Init(const std::string& configfile, int unitType, int frame, int frameCount);
+   virtual void Init(const std::string& configfile, int unitType, int frame);
    virtual void Shutdown();
    virtual void Update();
    virtual void Draw();
@@ -31,21 +33,24 @@ public:
 
    void SetInitialPos(Vector3 pos) { SetPos(pos); SetDest(pos); }
    virtual void SetPos(Vector3 pos);
-   virtual void SetDrawPos(Vector3 pos);
    virtual void SetDest(Vector3 pos);
    virtual void SetSpeed(float speed) { m_speed = speed; }
 
-   bool Pick();
+   void Interact(int event);
+
+
+   float Pick(); //  Returns distance if hit, -1 if no hit
 
    bool AddObjectToInventory(int objectid);
    bool RemoveObjectFromInventory(int objectid);
 
+   bool IsInInventory(int objectid);
+   bool IsInInventory(int shape, int frame);
+  
    Vector3 m_Pos;
-   Vector3 m_DrawPos;
    Vector3 m_Dest;
    Vector3 m_Direction;
    Vector3 m_Scaling;
-   int m_chunkOwn[2];
 
    Vector3 m_ExternalForce;
 
@@ -53,6 +58,7 @@ public:
 
    int m_ObjectType;
    int m_Frame;
+   int m_Quality;
 
    bool m_Visible;
    bool m_Selected;
@@ -74,9 +80,6 @@ public:
    bool m_ExternalForceFlag;
    bool m_BounceFlag;
 
-   bool m_isAnimated;
-   int m_frameCount;
-
    Mesh* m_Mesh;
    Texture* m_Texture;
    Texture* m_DropShadow;
@@ -93,11 +96,18 @@ public:
 
    BoundingBox m_boundingBox;
 
+   bool m_isNPC;
    bool m_isContainer;
    bool m_isContained;
    bool m_hasConversationTree;
    bool m_hasGump;
    bool m_isEgg;
+
+   int m_NPCID;
+
+   Vector2 m_GumpPos;
+   bool m_isSorted = false;
+   bool m_shouldBeSorted = true;
 
    std::vector<int> m_inventory; //  Each entry is the ID of an object in the object list
 

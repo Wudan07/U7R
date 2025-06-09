@@ -6,8 +6,7 @@
 #include "U7Globals.h"
 #include "LoadingState.h"
 
-
-
+#include <cstring>
 #include <list>
 #include <string>
 #include <sstream>
@@ -16,8 +15,16 @@
 #include <fstream>
 #include <algorithm>
 #include <unordered_map>
+#include <filesystem>
+
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <regex>
 
 using namespace std;
+using namespace std::filesystem;
 
 ////////////////////////////////////////////////////////////////////////////////
 //  LoadingState
@@ -30,7 +37,7 @@ LoadingState::~LoadingState()
 
 void LoadingState::Init(const string& configfile)
 {
-	g_minimapSize = GetRenderWidth() / 6;
+	g_minimapSize = g_Engine->m_RenderWidth / 4.5f;
 
 	MakeAnimationFrameMeshes();
 
@@ -43,7 +50,13 @@ void LoadingState::Init(const string& configfile)
 
 void LoadingState::OnEnter()
 {
-
+	#ifdef DEBUG_MODE
+    AddConsoleString("Debug Build", RED);
+    #elif defined(RELEASE_MODE)
+    AddConsoleString("Release Build");
+    #else
+	AddConsoleString("No build defined, please fix this.");
+    #endif
 }
 
 void LoadingState::OnExit()
@@ -71,20 +84,31 @@ void LoadingState::Draw()
 {
 	BeginDrawing();
 
+	BeginTextureMode(g_guiRenderTarget);
+
 	ClearBackground(BLACK);
 
 	if (m_loadingFailed == true)
 	{
 		std::string missingDataText = "Ultima VII files not found.  They should go into the " + g_Engine->m_EngineConfig.GetString("data_path") + " folder.";
-		DrawTextEx(*g_Font, missingDataText.c_str(), Vector2{0, 0}, g_fontSize, 1, WHITE);
-		DrawTextEx(*g_Font, "Press ESC to exit.", Vector2{ 0, g_fontSize * 2 }, g_fontSize, 1, WHITE);
+		DrawTextEx(*g_SmallFont, missingDataText.c_str(), Vector2{0, 0}, g_fontSize, 1, WHITE);
+		DrawTextEx(*g_SmallFont, "Press ESC to exit.", Vector2{ 0, g_fontSize * 2 }, g_fontSize, 1, WHITE);
 	}
 	else
 	{
 		DrawConsole();
 	}
 
-	DrawTexture(*g_Cursor, GetMouseX(), GetMouseY(), WHITE);
+	DrawTexture(*g_Cursor, 0, 0, WHITE);
+
+	EndTextureMode();
+
+	DrawTexturePro(g_guiRenderTarget.texture,
+		{ 0, 0, float(g_guiRenderTarget.texture.width), float(g_guiRenderTarget.texture.height) },
+		{ 0, float(g_Engine->m_ScreenHeight), float(g_Engine->m_ScreenWidth), -float(g_Engine->m_ScreenHeight) },
+		{ 0, 0 }, 0, WHITE);
+
+	//DrawTexture(*g_Cursor, GetMouseX(), GetMouseY(), WHITE);
 
 	EndDrawing();
 
@@ -93,11 +117,13 @@ void LoadingState::Draw()
 
 void LoadingState::UpdateLoading()
 {
+	
 	if (!m_loadingFailed)
 	{
 		if (!m_loadingVersion)
 		{
 			AddConsoleString(std::string("Loading version..."));
+			//splitUsecodeDis();
 			LoadVersion();
 			m_loadingVersion = true;
 			return;
@@ -143,6 +169,14 @@ void LoadingState::UpdateLoading()
 			return;
 		}
 
+		if(!m_loadingFaces)
+		{
+			AddConsoleString(std::string("Loading faces..."));
+			LoadFaces();
+			m_loadingFaces = true;
+			return;
+		}
+
 		if (!m_makingMap)
 		{
 			AddConsoleString(std::string("Making map..."));
@@ -174,7 +208,6 @@ void LoadingState::UpdateLoading()
 			m_loadingInitialGameState = true;
 			return;
 		}
-
 	}
 	else
 	{
@@ -425,7 +458,7 @@ void LoadingState::LoadIFIX()
 							int x = (thisLocationData >> 4) & 0xf;
 							int z = (thisLocationData >> 8) & 0xf;
 
-							AddObject(shape, frame, 1, GetNextID(), (superchunkx * 256) + (chunkx * 16) + x, z, (superchunky * 256) + (chunky * 16) + y);
+							AddObject(shape, frame, GetNextID(), (superchunkx * 256) + (chunkx * 16) + x, z, (superchunky * 256) + (chunky * 16) + y);
 
 							int stopper = 0;
 						}
@@ -439,744 +472,19 @@ void LoadingState::LoadIFIX()
 	}
 }
 
-void LoadingState::MakeMap()
+void LoadingState::LoadFaces()
 {
-	g_World.resize(3072);
-	for (int i = 0; i < 3072; ++i)
-	{
-		g_World[i].resize(3072);
-	}
-
-	//  Now, finally, we can create the world map.
-	for (int i = 0; i < 192; ++i)
-	{
-		for (int j = 0; j < 192; ++j)
-		{
-			int chunkid = g_chunkTypeMap[i][j];
-			for (int k = 0; k < 16; ++k)
-			{
-				for (int l = 0; l < 16; ++l)
-				{
-					unsigned int thisdata = g_ChunkTypeList[chunkid][l][k];
-					g_World[j * 16 + k][i * 16 + l] = g_ChunkTypeList[chunkid][l][k];
-
-
-					unsigned short shapenum = thisdata & 0x3ff;
-					unsigned short framenum = (thisdata >> 10) & 0x1f;
-
-					if (shapenum >= 150)
-					{
-						bool addStatic = true;
-						bool addAnimated = false;
-						ShapeData& shapeData = g_shapeTable[shapenum][framenum];
-						int frameCount = shapeData.CalculateAnimFrames();
-						
-						if (frameCount > 1) {
-							addStatic = false;
-							addAnimated = true;
-						}
-						
-						if (addStatic == true)
-						{
-							AddObject(shapenum, framenum, frameCount, GetNextID(), (i * 16 + k), 0, (j * 16 + l));
-						}
-						else if (addAnimated == true)
-						{
-							int frameStart = framenum - (framenum % frameCount);
-							int frameStop = frameStart + frameCount;
-							for (int m = frameStart; m < frameStop; m++)
-							{
-								AddObject(shapenum, m, frameCount, GetNextID(), (i * 16 + k), 0, (j * 16 + l));
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-}
-
-bool LoadingState::ShapeIsEgg(int shapeIdx) {
-  bool retVal = false;
-  if (shapeIdx == 0) { retVal = true; }
-  else if (shapeIdx == 275) { retVal = true; }
-  else if (shapeIdx == 607) { retVal = true; }
-  return retVal;
-}
-
-bool LoadingState::ShapeIsContainer(int shapeIdx) {
-    bool retVal = false;
-    if (shapeIdx == 283) { retVal = true; }
-    else if (shapeIdx == 400) { retVal = true; }
-    else if (shapeIdx == 405) { retVal = true; }
-    else if (shapeIdx == 406) { retVal = true; }
-    else if (shapeIdx == 407) { retVal = true; }
-    else if (shapeIdx == 414) { retVal = true; }
-    else if (shapeIdx == 416) { retVal = true; }
-    else if (shapeIdx == 507) { retVal = true; }
-    else if (shapeIdx == 522) { retVal = true; }
-    else if (shapeIdx == 679) { retVal = true; }
-    else if (shapeIdx == 762) { retVal = true; }
-    else if (shapeIdx == 798) { retVal = true; }
-    else if (shapeIdx == 799) { retVal = true; }
-    else if (shapeIdx == 800) { retVal = true; }
-    else if (shapeIdx == 801) { retVal = true; }
-    else if (shapeIdx == 802) { retVal = true; }
-    else if (shapeIdx == 803) { retVal = true; }
-    else if (shapeIdx == 804) { retVal = true; }
-    else if (shapeIdx == 819) { retVal = true; }
-    else if (shapeIdx == 892) { retVal = true; }
-    return retVal;
-}
-
-int LoadingState::IREGItem(bool printDebug, int scPos[2], int containerDepth, int dataLen, unsigned char* data)
-{
-  bool worldObject = false;
-  bool isEgg = false;
-  int shapeIdx = 0;
-  int frameIdx = 0;
-  int chunkx = 0;
-  int chunky = 0;
-  int intx = 0;
-  int inty = 0;
-  int actualx = 0;
-  int actualy = 0;
-  float lift1 = 0.0;
-  float lift2 = 0.0;
-  int thissuperchunk = scPos[0] + (scPos[1] * 12);
-
-  if (containerDepth == 0)
-  {
-    worldObject = true;
-  }
-  // now to the actual item load
-  if (dataLen == 6)
-  {
-    // start dataLen 6
-    unsigned char x = data[0];
-    unsigned char y = data[1];
-
-    chunkx = x >> 4;
-    chunky = y >> 4;
-    intx = x & 0x0f;
-    inty = y & 0x0f;
-
-    actualx = (scPos[0] * 256) + (chunkx * 16) + intx;
-    actualy = (scPos[1] * 256) + (chunky * 16) + inty;
-
-    unsigned int sf1 = data[2];
-    unsigned int sf2 = data[3];
-    if (printDebug == true)
-    {
-      printf("6 SF1 %d\n", sf1);
-      printf("6 SF2 %d\n", sf2);
-    }
-    shapeIdx = sf1 + ((sf2 & 3) << 8);
-    frameIdx = (sf2 >> 2);
-
-    unsigned char z = data[4];
-    lift1 = 0.0;
-    lift2 = 0.0;
-    if (z != 0)
-    {
-      lift1 = z >> 4;
-      lift2 = z & 0x0f;
-      //z *= 8;
-    }
-
-    unsigned char quality = data[5];
-
-    isEgg = ShapeIsEgg(shapeIdx);
-    bool isAnimated = false;
-    ShapeData& shapeData = g_shapeTable[shapeIdx][frameIdx];
-    int frameCount = shapeData.GetFrameCount();
-    if (frameCount > 1) {
-      isAnimated = true;
-    }
-
-    if (printDebug == true)
-    {
-      printf("  IREGItem 6 SC(%02x) chunk(%d %d) (%d %d) calling AddObject %d %d C(%d)\n", thissuperchunk, chunkx, chunky, actualx, actualy, shapeIdx, frameIdx, containerDepth);
-    }
-    if (isEgg == false  && worldObject == true) //  Eggs
-    {
-      if (isAnimated == false)
-      {
-        AddObject(shapeIdx, frameIdx, GetNextID(), actualx, lift1, actualy);
-      }
-      else
-      {
-        /*if (shapenum == interestedShape)
-        {
-          printf("  LoadMakeMap chunk(%d %d) calling AddObject Animated %d %d\n", l, k, shapenum, framenum);
-        }*/
-        int frameStart = frameIdx - (frameIdx % frameCount);
-        int frameStop = frameStart + frameCount;
-        for (int m = frameStart; m < frameStop; m++)
-        {
-          AddObject(shapeIdx, m, GetNextID(), actualx, lift1, actualy);
-        }
-      }
-    }
-    // end dataLen 6
-  }
-  else if (dataLen == 12)
-  {
-    // start dataLen 12
-    unsigned char x = data[0];
-    unsigned char y = data[1];
-
-    chunkx = x >> 4;
-    chunky = y >> 4;
-    intx = x & 0x0f;
-    inty = y & 0x0f;
-
-    actualx = (scPos[0] * 256) + (chunkx * 16) + intx;
-    actualy = (scPos[1] * 256) + (chunky * 16) + inty;
-
-    unsigned int sf1 = data[2];
-    unsigned int sf2 = data[3];
-    if (printDebug == true)
-    {
-      printf("12 SF1 %d %02x\n", sf1, sf1);
-      printf("12 SF2 %d %02x\n", sf2, sf2);
-    }
-    shapeIdx = sf1 + ((sf2 & 3) << 8);
-    //shapeIdx = sf1 + (256 * (sf2 & 3));
-    //shapenum = data[2] + 256 * (data[3] & 3)
-    frameIdx = (sf2 >> 2);
-
-    // skipping data[4 - 8]
-
-    unsigned char z = data[9];
-    float lift1 = 0;
-    float lift2 = 0;
-    float lift3 = 0;
-    if (z != 0)
-    {
-      lift1 = z >> 4;
-      lift2 = z & 0x0f;
-      lift3 = z / 8;
-
-    }
-
-    // skipping data[10 - 11]
-
-    isEgg = ShapeIsEgg(shapeIdx);
-
-    if (printDebug == true)
-    {
-      printf("  IREGItem 12 SC(%02x) chunk(%d %d) (%d %d) calling AddObject %d %d C(%d)\n", thissuperchunk, chunkx, chunky, actualx, actualy, shapeIdx, frameIdx, containerDepth);
-    }
-    if (isEgg == false && worldObject == true) //  Eggs
-    {
-      AddObject(shapeIdx, frameIdx, GetNextID(), actualx, lift1, actualy);
-    }
-    // end dataLen 12
-  }
-  else if (dataLen == 18)
-  {
-    // start dataLen 18
-    unsigned char x = data[0];
-    unsigned char y = data[1];
-
-    chunkx = x >> 4;
-    chunky = y >> 4;
-    intx = x & 0x0f;
-    inty = y & 0x0f;
-
-    actualx = (scPos[0] * 256) + (chunkx * 16) + intx;
-    actualy = (scPos[1] * 256) + (chunky * 16) + inty;
-
-    unsigned int sf1 = data[2];
-    unsigned int sf2 = data[3];
-    shapeIdx = sf1 + ((sf2 & 3) << 8);
-    frameIdx = (sf2 >> 2);
-
-    // skipping data[4 - 8]
-    
-    unsigned char z = data[9];
-    float lift1 = 0;
-    float lift2 = 0;
-    float lift3 = 0;
-    if (z != 0)
-    {
-      lift1 = z >> 4;
-      lift2 = z & 0x0f;
-      lift3 = z / 8;
-    }
-
-    // skipping data[10 - 17]
-
-    isEgg = ShapeIsEgg(shapeIdx);
-
-    if (printDebug == true)
-    {
-      printf("  IREGItem SC(%02x) chunk(%d %d) (%d %d) calling AddObject %d %d C(%d)\n", thissuperchunk, chunkx, chunky, actualx, actualy, shapeIdx, frameIdx, containerDepth);
-    }
-    if (isEgg == false && worldObject == true) //  Eggs
-    {
-      AddObject(shapeIdx, frameIdx, GetNextID(), actualx, lift1, actualy);
-    }
-    // end dataLen 18
-  }
-  return shapeIdx;
-}
-
-void LoadingState::LoadIREG()
-{
-  std::string dataPath = g_Engine->m_EngineConfig.GetString("data_path");
-  std::string loadingPath(dataPath);
-  loadingPath.append("/GAMEDAT/");
-
-  for (int superchunky = 0; superchunky < 12; ++superchunky)
-  {
-    for (int superchunkx = 0; superchunkx < 12; ++superchunkx)
-    {
-      std::stringstream ss;
-      int scPos[2];
-      scPos[0] = superchunkx;
-      scPos[1] = superchunky;
-      int thissuperchunk = superchunkx + (superchunky * 12);
-      if (thissuperchunk < 16)
-      {
-        ss << "U7IREG0" << std::hex << thissuperchunk;
-      }
-      else
-      {
-        ss << "U7IREG" << std::hex << thissuperchunk;
-      }
-      std::string s = ss.str();
-            
-         std::transform(s.begin(), s.end(), s.begin(), ::toupper);
-            
-      s.insert(0, loadingPath.c_str());
-
-      FILE* u7thisireg = fopen(s.c_str(), "rb");
-
-      if (u7thisireg == nullptr)
-      {
-        Log("Ultima VII files not found.  They should go into the Data/U7 folder.");
-        m_loadingFailed = true;
-        return;
-      }
-      else
-      {
-        while (!feof(u7thisireg))
-        {
-          //  Read the length of the object.
-          unsigned char length;
-          bool inContainer = false;
-          fread(&length, sizeof(unsigned char), 1, u7thisireg);
-          if (thissuperchunk == 108)
-          {
-            printf("CUR POS: %02X\n", ftell(u7thisireg));
-          }
-          if (length == 0)
-          {
-            if (thissuperchunk == 108)
-            {
-              printf("  hit a 0, end of chunk\n");
-            }
-          }
-          else if (length == 6) //  Object.
-          {
-            // start item length 6
-            int containerDepth = 0;
-            int cShape = 0;
-            unsigned char throwaway[6];
-            fread(&throwaway, sizeof(unsigned char), 6, u7thisireg);
-            if (thissuperchunk == 108)
-            {
-              cShape = IREGItem(true, scPos, containerDepth, 6, throwaway);
-            }
-            else
-            {
-              cShape = IREGItem(false, scPos, containerDepth, 6, throwaway);
-            }
-            /*
-            unsigned char x;
-            unsigned char y;
-            fread(&x, sizeof(unsigned char), 1, u7thisireg);
-            fread(&y, sizeof(unsigned char), 1, u7thisireg);
-
-            int chunkx = x >> 4;
-            int chunky = y >> 4;
-            int intx = x & 0x0f;
-            int inty = y & 0x0f;
-
-            int actualx = (superchunkx * 256) + (chunkx * 16) + intx;
-            int actualy = (superchunky * 256) + (chunky * 16) + inty;
-
-            unsigned short shapeData;
-            fread(&shapeData, sizeof(unsigned short), 1, u7thisireg);
-            int shape = shapeData & 0x3ff;
-            int frame = (shapeData >> 10) & 0x1f;
-
-            unsigned char z;
-            fread(&z, sizeof(unsigned char), 1, u7thisireg);
-            float lift1 = 0;
-            float lift2 = 0;
-            if (z != 0)
-            {
-              lift1 = z >> 4;
-              lift2 = z & 0x0f;
-              //z *= 8;
-            }
-
-            
-            unsigned char quality;
-            fread(&quality, sizeof(unsigned char), 1, u7thisireg);
-
-            if (thissuperchunk == 108) {
-              printf("  LoadIREG SC(%02x) chunk(%d %d) (%d %d) calling AddObject %d %d\n", thissuperchunk, chunkx, chunky, actualx, actualy, shape, frame);
-            }
-            if (shape != 275 && shape != 607 && shape != 0) //  Eggs
-            {
-              //if (chunkx == 0 && chunky == 5)
-              //{
-            //if (thissuperchunk == 108) {
-              AddObject(shape, frame, GetNextID(), actualx, lift1, actualy);
-            //}
-              //}
-            
-            }
-            else
-            {
-              //AddObject(shape, frame, GetNextID(), actualx, lift1, actualy);
-            }*/
-            // end item length 6
-          }
-          else if (length == 12) // Container or Egg
-          {
-            // start item length 12
-            //continue;
-            /*
-            unsigned char x;
-            unsigned char y;
-            fread(&x, sizeof(unsigned char), 1, u7thisireg); // 1
-            fread(&y, sizeof(unsigned char), 1, u7thisireg); // 2
-
-            int chunkx = x >> 4;
-            int chunky = y >> 4;
-            int intx = x & 0x0f;
-            int inty = y & 0x0f;
-
-            int actualx = (superchunkx * 256) + (chunkx * 16) + intx;
-            int actualy = (superchunky * 256) + (chunky * 16) + inty;
-
-            unsigned short shapeData;
-            fread(&shapeData, sizeof(unsigned short), 1, u7thisireg); // 3, 4
-            int shape = shapeData & 0x3ff;
-            int frame = (shapeData >> 10) & 0x1f;
-
-            unsigned char sink;
-            for (int i = 0; i < 5; ++i)
-            {
-              fread(&sink, sizeof(unsigned char), 1, u7thisireg); // 5-9
-            }
-
-            unsigned char z;
-            fread(&z, sizeof(unsigned char), 1, u7thisireg); // 10
-            float lift1 = 0;
-            float lift2 = 0;
-            float lift3 = 0;
-            if (z != 0)
-            {
-              lift1 = z >> 4;
-              lift2 = z & 0x0f;
-              lift3 = z / 8;
-              
-            }
-
-            //  Soak up the next 2 bytes.
-            unsigned char throwaway[2];
-            fread(&throwaway, sizeof(unsigned char), 2, u7thisireg);    // 11
-
-            if (thissuperchunk == 108) {
-              printf("  LoadIEGG SC(%02x) chunk(%d %d) (%d %d) calling AddObject %d %d\n", thissuperchunk, chunkx, chunky, actualx, actualy, shape, frame);
-            }
-            if (shape != 275 && shape != 607 && shape != 0)
-            {
-              AddObject(shape, frame, GetNextID(), actualx, lift1, actualy);
-            }
-            //  Egg or container?  01 Egg, 00 container.
-            */
-            int containerDepth = 0;
-            int tShape = 0;
-            unsigned char throwaway[12];
-            fread(&throwaway, sizeof(unsigned char), 12, u7thisireg);
-            if (thissuperchunk == 108)
-            {
-              tShape = IREGItem(true, scPos, containerDepth, 12, throwaway);
-            }
-            else
-            {
-              tShape = IREGItem(false, scPos, containerDepth, 12, throwaway);
-            }
-
-            bool isContainer = ShapeIsContainer(tShape);
-            if (isContainer == true) {
-                containerDepth += 1;
-                if (thissuperchunk == 108) {
-                  printf("  this is a container %d (%d)\n", tShape, containerDepth);
-                }
-            }
-            while (containerDepth > 0)
-            {
-              if (thissuperchunk == 108) {
-                printf("CUR POS: %02X\n", ftell(u7thisireg));
-                printf("  reading container %d\n", containerDepth);
-              }
-              unsigned char clength;
-              fread(&clength, sizeof(unsigned char), 1, u7thisireg);
-              if (clength == 0)
-              {
-                // 0 should mean end of chunk
-                if (thissuperchunk == 108) {
-                  printf("  hit %d, this container is finished\n", clength);
-                }
-                containerDepth = 0;
-              }
-              else if (clength == 1)
-              {
-                // 1 means end of container
-                if (thissuperchunk == 108) {
-                printf("  hit %d, this container is finished\n", clength);
-                }
-                containerDepth -= 1;
-              }
-              else if (clength == 6)
-              {
-                // data length 6
-                int cShape = 0;
-                unsigned char cthrowaway[6];
-                fread(&cthrowaway, sizeof(unsigned char), 6, u7thisireg);
-                if (thissuperchunk == 108)
-                {
-                  cShape = IREGItem(true, scPos, containerDepth, 6, cthrowaway);
-                }
-                else
-                {
-                  cShape = IREGItem(false, scPos, containerDepth, 6, cthrowaway);
-                }
-              }
-              else if (clength == 12)
-              {
-                // data length 12
-                int cShape = 0;
-                unsigned char cthrowaway[12];
-                fread(&cthrowaway, sizeof(unsigned char), 12, u7thisireg);
-                if (thissuperchunk == 108)
-                {
-                  cShape = IREGItem(true, scPos, containerDepth, 12, cthrowaway);
-                  bool cIsContainer = ShapeIsContainer(cShape);
-                  if (cIsContainer == true)
-                  {
-                    containerDepth += 1;
-                  }
-                }
-                else
-                {
-                  cShape = IREGItem(false, scPos, containerDepth, 12, cthrowaway);
-                  bool cIsContainer = ShapeIsContainer(cShape);
-                  if (cIsContainer == true)
-                  {
-                    containerDepth += 1;
-                  }
-                }
-
-                /*
-                unsigned short cShapeData;
-                fread(&cShapeData, sizeof(unsigned short), 1, u7thisireg); // 3, 4
-                int cShape = shapeData & 0x3ff;
-                int cFrame = (shapeData >> 10) & 0x1f;
-                bool cIsContainer = ShapeIsContainer(cShape);
-                if (cIsContainer == true) {
-                  containerDepth += 1;
-                }
-                // now burn the other 10
-                unsigned char throwaway[10];
-                fread(&throwaway, sizeof(unsigned char), 10, u7thisireg);
-                */
-              }
-              else if (clength == 18)
-              {
-                // data length 18
-                //unsigned char throwaway[18];
-                //fread(&throwaway, sizeof(unsigned char), 18, u7thisireg);
-                int cShape = 0;
-                unsigned char cthrowaway[18];
-                fread(&cthrowaway, sizeof(unsigned char), 18, u7thisireg);
-                if (thissuperchunk == 108)
-                {
-                  cShape = IREGItem(true, scPos, containerDepth, 18, cthrowaway);
-                }
-                else
-                {
-                  cShape = IREGItem(false, scPos, containerDepth, 18, cthrowaway);
-                }
-                bool cIsContainer = ShapeIsContainer(cShape);
-                if (cIsContainer == true) {
-                  containerDepth += 1;
-                }
-              }
-              //  Container.  Read in the container's objects.
-              
-              
-            //unsigned char objectflag = 0;
-            //  fread(&length, sizeof(unsigned char), 1, u7thisireg);
-            //  while (objectflag != 01) //  No more contained objects
-            //  {
-            //    unsigned char x;
-            //    unsigned char y;
-            //    fread(&x, sizeof(unsigned char), 1, u7thisireg);
-            //    fread(&y, sizeof(unsigned char), 1, u7thisireg);
-
-            //    int chunkx = x >> 4;
-            //    int chunky = y >> 4;
-            //    int intx = x & 0x0f;
-            //    int inty = y & 0x0f;
-
-            //    int actualx = (superchunkx * 256) + (chunkx * 16) + intx;
-            //    int actualy = (superchunky * 256) + (chunky * 16) + inty;
-
-            //    unsigned short shapeData;
-            //    fread(&shapeData, sizeof(unsigned short), 1, u7thisireg);
-            //    int shape = shapeData & 0x3ff;
-            //    int frame = (shapeData >> 10) & 0x1f;
-
-            //    unsigned char z;
-            //    fread(&z, sizeof(unsigned char), 1, u7thisireg);
-            //    float lift1 = 0;
-            //    float lift2 = 0;
-            //    if (z != 0)
-            //    {
-            //      lift1 = z >> 4;
-            //      lift2 = z & 0x0f;
-            //      //z *= 8;
-            //    }
-
-            //    AddObject(shape, frame, GetNextID(), actualx, lift1, actualy);
-            //    unsigned char quality;
-            //    fread(&quality, sizeof(unsigned char), 1, u7thisireg);
-            //    fread(&objectflag, sizeof(unsigned char), 1, u7thisireg);
-            }
-            //}
-            //else
-            //{
-            //  //  Egg.  Do nothing.
-            //}
-            // end item length 12
-          }
-          else if (length == 18) // Spellbook
-          {
-            // start item length 18
-            int containerDepth = 0;
-            //unsigned char throwaway[18];
-            //fread(&throwaway, sizeof(unsigned char), 18, u7thisireg);
-            int cShape = 0;
-            unsigned char cthrowaway[18];
-            fread(&cthrowaway, sizeof(unsigned char), 18, u7thisireg);
-            if (thissuperchunk == 108)
-            {
-              cShape = IREGItem(true, scPos, containerDepth, 18, cthrowaway);
-            }
-            else
-            {
-              cShape = IREGItem(false, scPos, containerDepth, 18, cthrowaway);
-            }
-            bool cIsContainer = ShapeIsContainer(cShape);
-            if (cIsContainer == true) {
-              containerDepth += 1;
-            }
-            // end item length 18
-          }
-        }
-      }
-
-      //int stopper = 0;
-      fclose(u7thisireg);
-    }
-  }
-}
-
-void LoadingState::CreateShapeTable()
-{
-	//  Load palette data
-	ifstream palette;
 	std::string dataPath = g_Engine->m_EngineConfig.GetString("data_path");
 	std::string loadingPath(dataPath);
-	loadingPath.append("/STATIC/PALETTES.FLX");
-	palette.open(loadingPath.c_str(), ios::binary);
-	if (!palette.good())
+	loadingPath.append("/STATIC/FACES.VGA");
+	ifstream shapesFile(loadingPath.c_str(), ios::binary);
+
+	if(shapesFile.fail())
 	{
-		Log("Ultima VII files not found.  They should go into the Data/U7/blackgate folder.");
-		throw("Ultima VII files not found.  They should go into the Data/U7/blackgate folder.");
+		Log("Ultima VII files not found.  They should go into the Data/U7 folder.");
+		m_loadingFailed = true;
+		return;
 	}
-
-	vector<FLXEntryData> paletteEntryMap = ParseFLXHeader(palette);
-
-	//  We only want the first palette for now.
-	palette.seekg(paletteEntryMap[0].offset);
-	unsigned char* paletteData = (unsigned char*)malloc(paletteEntryMap[0].length);
-	palette.read((char*)paletteData, paletteEntryMap[1].length);
-
-	//  Currently only loading the base palette.  Other palettes are for lighting effects.
-	for (int j = 0; j < 256; ++j)
-	{
-		unsigned char r = paletteData[j * 3];
-		unsigned char g = paletteData[j * 3 + 1];
-		unsigned char b = paletteData[j * 3 + 2];
-		m_palette[j].r = r * 4;
-		m_palette[j].g = g * 4;
-		m_palette[j].b = b * 4;
-		m_palette[j].a = 255;
-	}
-
-	m_palette[254] = Color{ 128, 128, 128, 128 };
-
-	palette.close();
-
-	//  Load shape data
-	ifstream shapesFile;
-	std::string shapePath = dataPath.append("/STATIC/SHAPES.VGA");
-	shapesFile.open(shapePath.c_str(), ios::binary);
-
-	stringstream shapes;
-	shapes << shapesFile.rdbuf();
-	shapesFile.close();
-
-	vector<FLXEntryData> shapeEntryMap = ParseFLXHeader(shapes);
-
-	bool test = true;
-
-		//  The first 150 entries (0-149) are terrain textures.  They are not
-	//  rle-encoded.  Splat them directly to the terrain texture.
-	Image& tempImage = g_Terrain->GetTerrainTexture();
-	for (int thisShape = 0; thisShape < 150; ++thisShape)
-	{
-		shapes.seekg(shapeEntryMap[thisShape].offset);
-		int numFrames = shapeEntryMap[thisShape].length / 64;
-		for (int thisFrame = 0; thisFrame < numFrames; ++thisFrame)
-		{
-			if (thisShape == 12 && thisFrame == 0)
-				continue;
-			for (int i = 0; i < 8; ++i)
-			{
-				for (int j = 0; j < 8; ++j)
-				{
-					unsigned char Value = ReadU8(shapes);
-					ImageDrawPixel(&tempImage, (thisShape * 8) + j, (thisFrame * 8) + i, m_palette[Value]);
-				}
-			}
-
-		}
-	}
-
-	g_Terrain->UpdateTerrainTexture(tempImage);
-	g_Terrain->Init();
-	Log("Done creating terrain.");
 
 	struct frameData
 	{
@@ -1189,17 +497,31 @@ void LoadingState::CreateShapeTable()
 		unsigned int height;
 		int xDrawOffset;
 		int yDrawOffset;
+		int xDrawLeft;
+		int xDrawRight;
+		int yDrawAbove;
+		int yDrawBelow;
 	};
+	
+	stringstream shapes;
+	shapes << shapesFile.rdbuf();
+	shapesFile.close();
 
-	float profilingTime = GetTime();
+	vector<LoadingState::FLXEntryData> shapeEntryMap = ParseFLXHeader(shapes);
 
-	for (int thisShape = 150; thisShape < 1024; ++thisShape)
+	for (int thisShape = 0; thisShape < shapeEntryMap.size(); ++thisShape)
 	{
 		//  The next 874 entries (150-1023) are objects.
 
 		//  Read the shape data.
+		int thisOffset = shapeEntryMap[thisShape].offset;
+		int thisLength = shapeEntryMap[thisShape].length;
+		if(thisOffset == 0 && thisLength == 0)
+		{
+			continue; //  No data for this shape.
+		}
 
-		shapes.seekg(shapeEntryMap[thisShape].offset);
+		shapes.seekg(thisOffset);
 		unsigned int headerStart = shapes.tellg();
 		unsigned int firstData = ReadU32(shapes);
 
@@ -1235,8 +557,433 @@ void LoadingState::CreateShapeTable()
 				frameOffsets[i].height = frameOffsets[i].H1 + frameOffsets[i].H2 + 1;
 				frameOffsets[i].width = frameOffsets[i].W2 + frameOffsets[i].W1 + 1;
 
+				frameOffsets[i].xDrawRight = frameOffsets[i].W2;
+				frameOffsets[i].xDrawLeft = frameOffsets[i].W1;
+				frameOffsets[i].yDrawAbove = frameOffsets[i].H1;
+				frameOffsets[i].yDrawBelow = frameOffsets[i].H2;
+
 				frameOffsets[i].xDrawOffset = frameOffsets[i].W2;
 				frameOffsets[i].yDrawOffset = frameOffsets[i].H2;
+				if (thisShape >= 150) {
+					printf("shapeData.SetPixelOffset Shape %d Frame %d setting offset %d %d\n", thisShape, i, frameOffsets[i].xDrawLeft, frameOffsets[i].yDrawAbove);
+					shapeData.SetPixelOffset(frameOffsets[i].xDrawLeft, frameOffsets[i].yDrawAbove);
+				}
+
+				shapeData.CreateDefaultTexture();
+				Image tempImage = GenImageColor(frameOffsets[i].width, frameOffsets[i].height, Color{ 0, 0, 0, 0 });
+				//  Read each span.  Spans can be either RLE or raw pixel data.
+				while (true)
+				{
+					unsigned short blockData = ReadU16(shapes);
+					unsigned short spanLength = blockData >> 1;
+					unsigned short spanType = blockData & 1;
+
+					if (blockData == 0)
+					{
+						break; //  There are no more spans; we're done with this frame.
+					}
+
+					short xStart = ReadS16(shapes);
+					short yStart = ReadS16(shapes);
+					xStart += frameOffsets[i].width - frameOffsets[i].xDrawOffset - 1;
+					yStart += frameOffsets[i].height - frameOffsets[i].yDrawOffset - 1;
+
+					int paletteNumber = 0;
+
+					if (spanType == 0) // Not RLE, raw pixel data.
+					{
+						for (int i = 0; i < spanLength; ++i)
+						{
+							unsigned char Value = ReadU8(shapes);
+							ImageDrawPixel(&tempImage, xStart + i, yStart, m_palettes[0][Value]);
+						}
+					}
+					else // RLE.
+					{
+						int endX = xStart + spanLength;
+
+						while (xStart < endX)
+						{
+							unsigned char runData = ReadU8(shapes);
+							int runLength = runData >> 1;
+							int runType = runData & 1;
+
+							if (runType == 0) // Once again, non-RLE
+							{
+								for (int i = 0; i < runLength; ++i)
+								{
+									unsigned char Value = ReadU8(shapes);
+									ImageDrawPixel(&tempImage, xStart + i, yStart, m_palettes[0][Value]);
+								}
+							}
+							else
+							{
+								unsigned char Value = ReadU8(shapes);
+								for (int i = 0; i < runLength; ++i)
+								{
+									ImageDrawPixel(&tempImage, xStart + i, yStart, m_palettes[0][Value]);
+								}
+							}
+							xStart += runLength;
+						}
+					}
+				}
+				g_ResourceManager->AddTexture(tempImage, "U7FACES" + std::to_string(thisShape) + std::to_string(i));
+				//shapeData.SetDefaultTexture(tempImage);
+			}
+
+			continue;
+		}
+		else  //  This entry is not encoded.
+		{
+
+		}
+	}
+
+	shapesFile.close();
+}
+
+void LoadingState::MakeMap()
+{
+	g_World.resize(3072);
+	for (int i = 0; i < 3072; ++i)
+	{
+		g_World[i].resize(3072);
+	}
+
+	//  Now, finally, we can create the world map.
+	for (int i = 0; i < 192; ++i)
+	{
+		for (int j = 0; j < 192; ++j)
+		{
+			int chunkid = g_chunkTypeMap[i][j];
+			for (int k = 0; k < 16; ++k)
+			{
+				for (int l = 0; l < 16; ++l)
+				{
+					unsigned int thisdata = g_ChunkTypeList[chunkid][l][k];
+					g_World[j * 16 + k][i * 16 + l] = g_ChunkTypeList[chunkid][l][k];
+
+
+					unsigned short shapenum = thisdata & 0x3ff;
+					unsigned short framenum = (thisdata >> 10) & 0x1f;
+
+					if (shapenum >= 150)
+					{
+						AddObject(shapenum, framenum, GetNextID(), (i * 16 + k), 0, (j * 16 + l));
+					}
+				}
+			}
+		}
+	}
+}
+
+void LoadingState::LoadIREG()
+{
+	std::string dataPath = g_Engine->m_EngineConfig.GetString("data_path");
+	std::string loadingPath(dataPath);
+	loadingPath.append("/GAMEDAT/");
+
+	for (int superchunky = 0; superchunky < 12; ++superchunky)
+	{
+		for (int superchunkx = 0; superchunkx < 12; ++superchunkx)
+		{
+         std::stringstream ss;
+			int thissuperchunk = superchunkx + (superchunky * 12);
+			if (thissuperchunk < 16)
+			{
+				ss << "U7IREG0" << std::hex << thissuperchunk;
+			}
+			else
+			{
+				ss << "U7IREG" << std::hex << thissuperchunk;
+			}
+			std::string s = ss.str();
+            
+         std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+            
+			s.insert(0, loadingPath.c_str());
+
+			FILE* u7thisireg = fopen(s.c_str(), "rb");
+
+			if (u7thisireg == nullptr)
+			{
+				Log("Ultima VII files not found.  They should go into the Data/U7 folder.");
+				m_loadingFailed = true;
+				return;
+			}
+			else
+			{
+				//  Flags for putting objects in containers.
+				unsigned int containerId = 0;
+				bool containerOpen = false;
+
+				while (!feof(u7thisireg))
+				{
+					//  Read the length of the object.
+					unsigned char length;
+					fread(&length, sizeof(unsigned char), 1, u7thisireg);
+					if (length == 6) //  Object.
+					{
+						unsigned char x;
+						unsigned char y;
+						fread(&x, sizeof(unsigned char), 1, u7thisireg);
+						fread(&y, sizeof(unsigned char), 1, u7thisireg);
+
+						int chunkx = x >> 4;
+						int chunky = y >> 4;
+						int intx = x & 0x0f;
+						int inty = y & 0x0f;
+
+						int actualx = (superchunkx * 256) + (chunkx * 16) + intx;
+						int actualy = (superchunky * 256) + (chunky * 16) + inty;
+
+						unsigned short shapeData;
+						fread(&shapeData, sizeof(unsigned short), 1, u7thisireg);
+						int shape = shapeData & 0x3ff;
+						int frame = (shapeData >> 10) & 0x1f;
+
+						unsigned char z;
+						fread(&z, sizeof(unsigned char), 1, u7thisireg);
+						float lift1 = 0;
+						float lift2 = 0;
+						if (z != 0)
+						{
+							lift1 = z >> 4;
+							lift2 = z & 0x0f;
+							//z *= 8;
+						}
+
+						
+						unsigned char quality;
+						fread(&quality, sizeof(unsigned char), 1, u7thisireg);
+
+						if (shape != 275 && shape != 607 && shape != 0) //  Eggs
+						{
+							int objectId = GetNextID();
+							AddObject(shape, frame, objectId, actualx, lift1, actualy);
+
+							if (containerOpen)
+							{
+								AddObjectToContainer(objectId, containerId);
+							}
+						}
+					}
+					else if (length == 12) // Container or Egg
+					{
+						//continue;
+						unsigned char x;
+						unsigned char y;
+						fread(&x, sizeof(unsigned char), 1, u7thisireg); // 1
+						fread(&y, sizeof(unsigned char), 1, u7thisireg); // 2
+
+						int chunkx = x >> 4;
+						int chunky = y >> 4;
+						int intx = x & 0x0f;
+						int inty = y & 0x0f;
+
+						int actualx = (superchunkx * 256) + (chunkx * 16) + intx;
+						int actualy = (superchunky * 256) + (chunky * 16) + inty;
+
+						unsigned short shapeData;
+						fread(&shapeData, sizeof(unsigned short), 1, u7thisireg); // 3, 4
+						int shape = shapeData & 0x3ff;
+						int frame = (shapeData >> 10) & 0x1f;
+
+						unsigned char sink;
+						for (int i = 0; i < 5; ++i)
+						{
+							fread(&sink, sizeof(unsigned char), 1, u7thisireg); // 5-9
+						}
+
+						unsigned char z;
+						fread(&z, sizeof(unsigned char), 1, u7thisireg); // 10
+						float lift1 = 0;
+						float lift2 = 0;
+						float lift3 = 0;
+						if (z != 0)
+						{
+							lift1 = z >> 4;
+							lift2 = z & 0x0f;
+							lift3 = z / 8;
+
+						}
+
+						//  Soak up the next 2 bytes.
+						unsigned char throwaway[1];
+						fread(&throwaway, sizeof(unsigned char), 1, u7thisireg);		// 11
+
+						int id = GetNextID();
+						AddObject(shape, frame, id, actualx, lift1, actualy);
+						GetObjectFromID(id)->m_isContainer = true;
+
+						//  Egg or container?  01 Egg, 00 container.
+						unsigned char eggOrContainer;
+						fread(&eggOrContainer, sizeof(unsigned char), 1, u7thisireg); // 12
+						if (g_objectTable[shape].m_name == "Egg")
+						{
+							GetObjectFromID(id)->m_isEgg = true;
+							GetObjectFromID(id)->m_isContainer = false;
+						}
+						else
+						{
+							GetObjectFromID(id)->m_isContainer = true;
+							containerOpen = true;
+							containerId = id;
+
+						}
+					}
+					else if(length == 1) //  Close container
+					{
+						containerOpen = false;
+					}
+				}
+			}
+
+			//int stopper = 0;
+			fclose(u7thisireg);
+		}
+	}
+}
+
+void LoadingState::CreateShapeTable()
+{
+	//  Load palette data
+	ifstream palette;
+	std::string dataPath = g_Engine->m_EngineConfig.GetString("data_path");
+	std::string loadingPath(dataPath);
+	loadingPath.append("/STATIC/PALETTES.FLX");
+	palette.open(loadingPath.c_str(), ios::binary);
+	if (!palette.good())
+	{
+		Log("Ultima VII files not found.  They should go into the Data/U7/blackgate folder.");
+		throw("Ultima VII files not found.  They should go into the Data/U7/blackgate folder.");
+	}
+
+	vector<FLXEntryData> paletteEntryMap = ParseFLXHeader(palette);
+
+	for(int i = 0; i < paletteEntryMap.size(); ++i)
+	{
+		if(paletteEntryMap[i].length == 0)
+		{
+			continue;
+		}
+		palette.seekg(paletteEntryMap[i].offset);
+		unsigned char* paletteData = (unsigned char*)malloc(paletteEntryMap[1].length);
+		palette.read((char*)paletteData, paletteEntryMap[1].length);
+	
+		std::array<Color, 256> thisPalette;
+		//  Currently only loading the base palette.  Other palettes are for lighting effects.
+		for (int j = 0; j < 256; ++j)
+		{
+			unsigned char r = paletteData[j * 3];
+			unsigned char g = paletteData[j * 3 + 1];
+			unsigned char b = paletteData[j * 3 + 2];
+			thisPalette[j].r = r * 4;
+			thisPalette[j].g = g * 4;
+			thisPalette[j].b = b * 4;
+			thisPalette[j].a = 255;
+		}
+	
+		thisPalette[254] = Color{ 128, 128, 128, 128 };
+
+		m_palettes.push_back(thisPalette);
+	}
+
+	palette.close();
+
+	//  Load shape data
+	ifstream shapesFile;
+	std::string shapePath = dataPath.append("/STATIC/SHAPES.VGA");
+	shapesFile.open(shapePath.c_str(), ios::binary);
+
+	stringstream shapes;
+	shapes << shapesFile.rdbuf();
+	shapesFile.close();
+
+	vector<FLXEntryData> shapeEntryMap = ParseFLXHeader(shapes);
+
+	bool test = true;
+
+	struct frameData
+	{
+		unsigned int fileOffset;
+		short W2;
+		short W1;
+		short H1;
+		short H2;
+		unsigned int width;
+		unsigned int height;
+		int xDrawOffset;
+		int yDrawOffset;
+		int xDrawLeft;
+		int xDrawRight;
+		int yDrawAbove;
+		int yDrawBelow;
+	};
+
+	float profilingTime = GetTime();
+
+	for (int thisShape = 150; thisShape < 1024; ++thisShape)
+	{
+		//  The next 874 entries (150-1023) are objects.
+
+		//  Read the shape data.
+
+		shapes.seekg(shapeEntryMap[thisShape].offset);
+		unsigned int headerStart = shapes.tellg();
+		unsigned int firstData = ReadU32(shapes);
+
+		//  If the first data is the same as the length of the shape entry, then this entry is run-length encoded.
+		if (firstData == shapeEntryMap[thisShape].length)
+		{
+			//  Next four bytes tell length of the header.
+			unsigned int headerLength = ReadU32(shapes);
+			unsigned int frameCount = ((headerLength - 4) / 4);
+			std::vector<frameData> frameOffsets;
+			frameOffsets.resize(frameCount);
+			frameOffsets[0].fileOffset = 0;
+			for (int i = 1; i < frameCount; ++i)
+			{
+				frameOffsets[i].fileOffset = ReadU32(shapes);
+			}
+
+			//  Read the frame data.
+			for (int i = 0; i < frameCount; ++i)
+			{
+				int paletteNumber = 0;
+				// if(thisShape == 508 || thisShape == 512 || (thisShape == 732 && (i == 4 || i == 5))) // Stained glass
+				// {
+				// 	paletteNumber = 11;
+				// }
+				// if(thisShape == 912) // Blood
+				// {
+				// 	paletteNumber = 11;
+				// }
+
+				ShapeData& shapeData = g_shapeTable[thisShape][i];
+				//  Seek to the start of this frame's data.
+				if (i > 0)
+				{
+					shapes.seekg(headerStart + frameOffsets[i].fileOffset);
+				}
+
+				frameOffsets[i].W2 = ReadS16(shapes);
+				frameOffsets[i].W1 = ReadS16(shapes);
+				frameOffsets[i].H1 = ReadS16(shapes);
+				frameOffsets[i].H2 = ReadS16(shapes);
+
+				frameOffsets[i].height = frameOffsets[i].H1 + frameOffsets[i].H2 + 1;
+				frameOffsets[i].width = frameOffsets[i].W2 + frameOffsets[i].W1 + 1;
+
+				frameOffsets[i].xDrawOffset = frameOffsets[i].W2;
+				frameOffsets[i].yDrawOffset = frameOffsets[i].H2;
+				frameOffsets[i].xDrawRight = frameOffsets[i].W2;
+				frameOffsets[i].xDrawLeft = frameOffsets[i].W1;
+				frameOffsets[i].yDrawAbove = frameOffsets[i].H1;
+				frameOffsets[i].yDrawBelow = frameOffsets[i].H2;
+				printf("shapeData.SetPixelOffset Shape %d Frame %d setting offset %d %d\n", thisShape, i, frameOffsets[i].xDrawLeft, frameOffsets[i].yDrawAbove);
+				shapeData.SetPixelOffset(frameOffsets[i].xDrawLeft, frameOffsets[i].yDrawAbove);
 
 				shapeData.CreateDefaultTexture();
 				Image tempImage = GenImageColor(frameOffsets[i].width, frameOffsets[i].height, Color{ 0, 0, 0, 0 });
@@ -1262,7 +1009,7 @@ void LoadingState::CreateShapeTable()
 						for (int i = 0; i < spanLength; ++i)
 						{
 							unsigned char Value = ReadU8(shapes);
-							ImageDrawPixel(&tempImage, xStart + i, yStart, m_palette[Value]);
+							ImageDrawPixel(&tempImage, xStart + i, yStart, m_palettes[paletteNumber][Value]);
 						}
 					}
 					else // RLE.
@@ -1280,7 +1027,7 @@ void LoadingState::CreateShapeTable()
 								for (int i = 0; i < runLength; ++i)
 								{
 									unsigned char Value = ReadU8(shapes);
-									ImageDrawPixel(&tempImage, xStart + i, yStart, m_palette[Value]);
+									ImageDrawPixel(&tempImage, xStart + i, yStart, m_palettes[paletteNumber][Value]);
 								}
 							}
 							else
@@ -1288,7 +1035,7 @@ void LoadingState::CreateShapeTable()
 								unsigned char Value = ReadU8(shapes);
 								for (int i = 0; i < runLength; ++i)
 								{
-									ImageDrawPixel(&tempImage, xStart + i, yStart, m_palette[Value]);
+									ImageDrawPixel(&tempImage, xStart + i, yStart, m_palettes[paletteNumber][Value]);
 								}
 							}
 							xStart += runLength;
@@ -1322,43 +1069,57 @@ void LoadingState::CreateShapeTable()
 
 	profilingTime = GetTime() - profilingTime;
 	Log("Time to load shapes: " + std::to_string(profilingTime));
+
+	//  The first 150 entries (0-149) are terrain textures.  They are not
+	//  rle-encoded.  Splat them directly to the terrain texture.
+	Image& tempImage = g_Terrain->GetTerrainTexture();
+	for (int thisShape = 0; thisShape < 150; ++thisShape)
+	{
+		shapes.seekg(shapeEntryMap[thisShape].offset);
+		int numFrames = shapeEntryMap[thisShape].length / 64;
+		for (int thisFrame = 0; thisFrame < numFrames; ++thisFrame)
+		{
+			if (thisShape == 12 && thisFrame == 0)
+				continue;
+			for (int i = 0; i < 8; ++i)
+			{
+				for (int j = 0; j < 8; ++j)
+				{
+					unsigned char Value = ReadU8(shapes);
+					ImageDrawPixel(&tempImage, (thisShape * 8) + j, (thisFrame * 8) + i, m_palettes[0][Value]);
+				}
+			}
+
+		}
+	}
+
+	g_Terrain->UpdateTerrainTexture(tempImage);
+	g_Terrain->Init();
+	Log("Done creating terrain.");
 }
 
 void LoadingState::LoadModels()
 {
-	ifstream directory("Models/3dmodels/modelnames.txt");
-	if (!directory.is_open())
+	string directoryPath("Models/3dmodels");
+
+	for (const auto& entry : directory_iterator(directoryPath))
 	{
-		return;
-	}
+        if (entry.is_regular_file())
+		{
+            std::string ext = entry.path().extension().string();
 
-	//Read in file header
-	while (!directory.eof())
-	{
-
-		std::string m_Filename;
-		std::getline(directory, m_Filename);
-
-		if (m_Filename.length() == 0)
-			continue;
-
-		//Try to open model file
-		std::string objPath = "Models/3dmodels/" + m_Filename + std::string(".obj");
-		std::string mtlPath = "Models/3dmodels/" + m_Filename + std::string(".mtl");
-
-		Model model = LoadModel(objPath.c_str());
-		int materialCount = 0;
-		Material* material = LoadMaterials(mtlPath.c_str(), &materialCount); // Load material
-		model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = material[0].maps[0].texture;            // Set map diffuse texture
-
-		g_ResourceManager->AddModel(model, objPath);
-	}
+            if (ext == ".obj" || ext == ".gltf")
+			{
+                std::string filepath = entry.path().string();
+				g_ResourceManager->AddModel(filepath);
+            }
+        }
+    }
 }
 
 void LoadingState::CreateObjectTable()
 {
 	//  Open the two files that define the objects in the object table.
-	// Open the two files that define the objects in the object table.
 	std::string dataPath = g_Engine->m_EngineConfig.GetString("data_path");
 
 	std::stringstream tfa;
@@ -1426,7 +1187,7 @@ void LoadingState::CreateObjectTable()
 		// Weight and volume from wgtvol.dat
 		unsigned char weight;
 		wgtvolfile.read((char*)&weight, sizeof(char));
-		g_objectTable[i].m_weight = float(weight) * .10f;
+		g_objectTable[i].m_weight = float(weight) / .10f;
 		unsigned char volume;
 		wgtvolfile.read((char*)&volume, sizeof(char));
 		g_objectTable[i].m_volume = float(volume);
@@ -1490,6 +1251,7 @@ std::vector<LoadingState::FLXEntryData> LoadingState::ParseFLXHeader(istream &fi
 		thisentry.offset = ReadS32(file);
 		if (thisentry.offset == 0) //  Offset of 0 means no object here.
 		{
+			ReadS32(file); //  Soak this data or it will corrupt the next entry.
 			thisentry.length = 0;
 			continue;
 		}
@@ -1513,8 +1275,8 @@ void LoadingState::LoadInitialGameState()
 	initGameFile.close();
 
 	vector<FLXEntryData> subFileMap = ParseFLXHeader(subFiles);
-	
-	for (auto& node = subFileMap.begin(); node != subFileMap.end(); ++node)
+
+	for (auto node = subFileMap.begin(); node != subFileMap.end(); ++node)
 	{
 		subFiles.seekg(node->offset);
 		//  First thirteen characters are the filename.
@@ -1528,17 +1290,16 @@ void LoadingState::LoadInitialGameState()
 			short npcCount2 = ReadU16(subFiles);
 			int fullcount = npcCount1 + npcCount2;
 			int filepos = subFiles.tellg();
-			Log("File position: " + to_string(filepos));
+			
 			for (int i = 0; i < fullcount; ++i)
 			{
 				if (i == 139) // This NPC is broken and attempting to parse it messes up all NPCs after it.  It's not used anyway so we just skip it.
 				{
-					Log("Stopper");// subFiles.seekg(2761, ios::cur);
+					//Log("Stopper");// subFiles.seekg(2761, ios::cur);
 				}
 
-				int size = sizeof(NPCblock);
-				Log("NPC block size: " + std::to_string(size));
-				NPCblock thisNPC;
+				int size = sizeof(NPCData);
+				NPCData thisNPC;
 				
 				thisNPC.x = ReadU8(subFiles);
 				thisNPC.y = ReadU8(subFiles);
@@ -1560,7 +1321,10 @@ void LoadingState::LoadInitialGameState()
 				thisNPC.referent = ReadU16(subFiles);
 				thisNPC.status = ReadU16(subFiles);
 
-				AddObject(shapenum, 16, GetNextID(), 1, chunkx * 16 * 16 + thisNPC.x, thisNPC.lift >> 4, chunky * 16 * 16 + thisNPC.y);
+            unsigned int nextID = GetNextID();
+				AddObject(shapenum, 16, nextID, chunkx * 16 * 16 + thisNPC.x, thisNPC.lift >> 4, chunky * 16 * 16 + thisNPC.y);
+            g_ObjectList[nextID].get()->m_isContainer = true;
+            g_ObjectList[nextID].get()->m_hasConversationTree = true;
 
 				thisNPC.str = ReadU8(subFiles);
 				thisNPC.dex = ReadU8(subFiles);
@@ -1572,7 +1336,7 @@ void LoadingState::LoadInitialGameState()
 				subFiles.read(thisNPC.soak1, 3);
 
 				thisNPC.status2 = ReadU16(subFiles);
-				thisNPC.index2 = ReadU8(subFiles);
+				thisNPC.id = ReadU8(subFiles);
 
 				subFiles.read(thisNPC.soak2, 2);
 
@@ -1603,9 +1367,10 @@ void LoadingState::LoadInitialGameState()
 				subFiles.read(thisNPC.name, 16);
 
 				int newfilepos = subFiles.tellg();
-				Log("File position after avatar: " + to_string(newfilepos));
-				Log("Size difference: " + to_string(newfilepos - filepos));
-				Log("Iolo starts at 2761 so there are " + to_string(2761 - newfilepos) + " bytes left.");
+
+				g_NPCData[thisNPC.id] = make_unique<NPCData>(thisNPC);
+
+				g_ObjectList[nextID].get()->m_NPCID = thisNPC.id;
 
 				if (thisNPC.type != 0 && i != 139) // This NPC has an inventory
 				{
@@ -1614,14 +1379,40 @@ void LoadingState::LoadInitialGameState()
 					while (length != 0)
 					{
 						int pointerlocation = subFiles.tellg();
-						Log("File pointer is at " + to_string(pointerlocation));
 						length = ReadU8(subFiles);
 						if (length == 6) //  Object.
 						{
-							for (int i = 0; i < 6; ++i)
-							{
-								ReadU8(subFiles);
-							}
+   						unsigned char x = ReadU8(subFiles);
+      					unsigned char y = ReadU8(subFiles);
+
+               		int chunkx = x >> 4;
+                  	int chunky = y >> 4;
+                     int intx = x & 0x0f;
+                     int inty = y & 0x0f;
+
+                     int actualx = (chunkx * 16) + intx;
+                     int actualy = (chunky * 16) + inty;
+
+                     unsigned short shapeData = ReadU16(subFiles);
+                     int shape = shapeData & 0x3ff;
+                     int frame = (shapeData >> 10) & 0x1f;
+
+                     unsigned char z = ReadU8(subFiles);
+                     float lift1 = 0;
+                     float lift2 = 0;
+                     if (z != 0)
+                     {
+                        lift1 = z >> 4;
+                        lift2 = z & 0x0f;
+							//z *= 8;
+                     }
+						
+                     unsigned char quality = ReadU8(subFiles);
+                     
+                     int objectId = GetNextID();
+							AddObject(shape, frame, objectId, actualx, lift1, actualy);
+                     
+							AddObjectToContainer(objectId, nextID);
 						}
 						else if (length == 12) // container or egg
 						{
@@ -1640,7 +1431,6 @@ void LoadingState::LoadInitialGameState()
 						}
 					}
 				}
-				Log("First block written: ");
 			}
 			stringstream npcData;
 		}

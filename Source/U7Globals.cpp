@@ -1,6 +1,8 @@
 #include "U7Globals.h"
 #include "Geist/Engine.h"
 #include "Geist/Logging.h"
+#include "ConversationState.h"
+#include "lua.hpp"
 #include <algorithm>
 #include <fstream>
 #include <sstream>
@@ -21,9 +23,12 @@ Texture* g_Minimap;
 
 std::shared_ptr<Font> g_Font;
 std::shared_ptr<Font> g_SmallFont;
+std::shared_ptr<Font> g_ConversationFont;
+std::shared_ptr<Font> g_guiFont;
 
 //float g_smallFontSize = 8;
 float g_fontSize = 16;
+float g_guiFontSize = 8;
 
 std::unique_ptr<RNG> g_VitalRNG;
 std::unique_ptr<RNG> g_NonVitalRNG;
@@ -32,6 +37,10 @@ std::unique_ptr<Terrain> g_Terrain;
 
 std::array<std::array<ShapeData, 32>, 1024> g_shapeTable;
 std::array<ObjectData, 1024> g_objectTable;
+
+std::unordered_map<int, unique_ptr<NPCData>> g_NPCData;
+
+ConversationState* g_ConversationState;
 
 bool g_CameraMoved;
 
@@ -65,15 +74,13 @@ std::vector<std::shared_ptr<U7Object>> g_sortedVisibleObjects;
 float g_cameraDistance; // distance from target
 float g_cameraRotation = 0; // angle around target
 
-//animframes
-bool g_animFramesInitialized = false;
-int g_currentAnimFrame[32];
-
 Shader g_alphaDiscard;
 
 bool g_pixelated = false;
 RenderTexture2D g_renderTarget;
 RenderTexture2D g_guiRenderTarget;
+
+std::unique_ptr<U7Player> g_Player;
 
 //  Slow.  Use only when you actually need to know the distance.
 float GetDistance(float startX, float startZ, float endX, float endZ)
@@ -264,24 +271,10 @@ if (IsKeyDown(KEY_E))
 
 		current = Vector3Add(current, finalmovement);
 
-		float worldBoxSize = 3072.0;
-		while (current.x < 0.0)
-		{
-			current.x += worldBoxSize;
-		}
-		while (current.x >= worldBoxSize)
-		{
-			current.x -= worldBoxSize;
-		}
-
-		while (current.z < 0.0)
-		{
-			current.z += worldBoxSize;
-		}
-		while (current.z >= (worldBoxSize + 0.0))
-		{
-			current.z -= worldBoxSize;
-		}
+		if (current.x < 0) current.x = 0;
+		if (current.x > 3072) current.x = 3072;
+		if (current.z < 0) current.z = 0;
+		if (current.z > 3072) current.z = 3072;
 
 		Vector3 camPos = { g_cameraDistance, g_cameraDistance, g_cameraDistance };
 		camPos = Vector3RotateByAxisAngle(camPos, Vector3{ 0, 1, 0 }, g_cameraRotation);
@@ -291,56 +284,6 @@ if (IsKeyDown(KEY_E))
 		g_camera.fovy = g_cameraDistance;
 	}
 
-	DoGlobalAnimationFramesUpdate();
-	return 0;
-}
-
-void DoGlobalAnimationFramesUpdate()
-{
-	float fTime = GetTime();
-	float iTime = float(int(fTime));
-	if (iTime > fTime) {
-		iTime -= 1.0;
-	}
-	float inSecond = fTime - iTime;
-	float frameTime = 1.0 / 3.0;
-	float sKeep = 0.0;
-
-	if (g_animFramesInitialized == false)
-	{
-		for (int i = 0; i < 32; i++)
-		{
-			g_currentAnimFrame[i] = 0;
-		}
-		g_animFramesInitialized = true;
-	}
-
-	for (int i = 2; i < 32; i++)
-	{
-		g_currentAnimFrame[i] = 0;
-		frameTime = 1.0 / float(i);
-		sKeep = inSecond;
-		while ((sKeep - frameTime) > 0.0)
-		{
-			g_currentAnimFrame[i] += 1;
-			sKeep -= frameTime;
-		}
-		if (g_currentAnimFrame[i] >= i)
-		{
-			g_currentAnimFrame[i] = 0;
-		}
-	}
-}
-
-int GetGlobalAnimationFrame(int frameCount)
-{
-	if (frameCount > 2)
-	{
-		if (frameCount < 32)
-		{
-			return g_currentAnimFrame[frameCount];
-		}
-	}
 	return 0;
 }
 
@@ -386,7 +329,7 @@ unsigned int g_CurrentUnitID = 0;
 
 unsigned int GetNextID() { return g_CurrentUnitID++; }
 
-void AddObject(int shapenum, int framenum, int frameCount, int id, float x, float y, float z)
+void AddObject(int shapenum, int framenum, int id, float x, float y, float z)
 {
 	if (shapenum == 451)
 	{
@@ -394,7 +337,7 @@ void AddObject(int shapenum, int framenum, int frameCount, int id, float x, floa
 	}
 
 	shared_ptr<U7Object> temp = U7ObjectClassFactory(0);
-	temp->Init("Data/Units/Walker.cfg", shapenum, framenum, frameCount);
+	temp->Init("Data/Units/Walker.cfg", shapenum, framenum);
 	temp->SetInitialPos(Vector3{ x, y, z });
 	temp->m_ID = id;
 
@@ -469,8 +412,7 @@ void DrawConsole()
 
 		if (elapsed < 10)
 		{
-			DrawTextEx(*g_SmallFont, (*node).m_String.c_str(), Vector2{ shadowOffset, counter * (g_SmallFont->baseSize + 2) + shadowOffset }, g_SmallFont->baseSize, 1, Color{ 0, 0, 0, (*node).m_Color.a });
-			DrawTextEx(*g_SmallFont, (*node).m_String.c_str(), Vector2{ 0, float(counter * (g_SmallFont->baseSize + 2)) }, g_SmallFont->baseSize, 1, (*node).m_Color);
+			DrawOutlinedText(g_SmallFont, (*node).m_String.c_str(), Vector2{ 0, float(counter * (g_SmallFont->baseSize + 2)) }, g_SmallFont->baseSize, 1, (*node).m_Color);
 
 		}
 		++counter;
@@ -489,6 +431,64 @@ void DrawConsole()
 		}
 	}
 }
+
+void DrawOutlinedText(std::shared_ptr<Font> font, const std::string& text, Vector2 position, float fontSize, int spacing, Color color)
+{
+	DrawTextEx(*font, text.c_str(), Vector2{ position.x + 1, position.y + 1 }, fontSize, spacing, Color{ 0, 0, 0, color.a });
+	DrawTextEx(*font, text.c_str(), Vector2{ position.x, position.y + 1 }, fontSize, spacing, Color{ 0, 0, 0, color.a });
+	DrawTextEx(*font, text.c_str(), Vector2{ position.x - 1, position.y - 1 }, fontSize, spacing, Color{ 0, 0, 0, color.a });
+	DrawTextEx(*font, text.c_str(), Vector2{ position.x, position.y - 1 }, fontSize, spacing, Color{ 0, 0, 0, color.a });
+	DrawTextEx(*font, text.c_str(), Vector2{ position.x + 1, position.y - 1 }, fontSize, spacing, Color{ 0, 0, 0, color.a });
+	DrawTextEx(*font, text.c_str(), Vector2{ position.x + 1, position.y }, fontSize, spacing, Color{ 0, 0, 0, color.a });
+	DrawTextEx(*font, text.c_str(), Vector2{ position.x - 1, position.y + 1 }, fontSize, spacing, Color{ 0, 0, 0, color.a });
+	DrawTextEx(*font, text.c_str(), Vector2{ position.x - 1, position.y }, fontSize, spacing, Color{ 0, 0, 0, color.a });
+	DrawTextEx(*font, text.c_str(), position, fontSize, spacing, color);
+}
+
+void DrawParagraph(std::shared_ptr<Font> font, const std::string& text, Vector2 position, float maxwidth, float fontSize, int spacing, Color color)
+{
+	std::istringstream iss(text);
+	std::string word;
+	std::vector<std::string> lines;
+	float lineWidth = 0;
+
+	// If the text is less than the width, just draw it.
+	if(MeasureTextEx(*font, text.c_str(), fontSize, spacing).x < maxwidth)
+	{
+		DrawOutlinedText(font, text.c_str(), position, fontSize, spacing, color);
+		return;
+	}
+
+	string line;
+	while (iss >> word)
+	{
+		if(MeasureTextEx(*font, line.c_str(), fontSize, spacing).x > maxwidth)
+		{
+			lines.push_back(line);
+			line.clear();
+			line += word + " ";
+		}
+		else
+		{
+			line += word + " ";
+		}
+	}
+
+	if (!line.empty())
+	{
+		lines.push_back(line);
+	}
+
+	auto it = lines.begin();
+	float y = position.y;
+	while (it != lines.end())
+	{
+		DrawOutlinedText(font, (*it).c_str(), Vector2{ position.x, y }, fontSize, spacing, color);
+		y += fontSize * 1.2f;
+		++it;
+	}
+}
+
 
 void AddObjectToContainer(int objectID, int containerID)
 {
@@ -516,6 +516,7 @@ std::shared_ptr<Sprite> g_BoxB;
 std::shared_ptr<Sprite> g_BoxBR;
 
 std::vector<std::shared_ptr<Sprite> > g_Borders;
+std::vector<std::shared_ptr<Sprite> > g_ConversationBorders;
 
 shared_ptr<Sprite> g_InactiveButtonL;
 shared_ptr<Sprite> g_InactiveButtonM;
@@ -530,6 +531,12 @@ shared_ptr<Sprite> g_RightArrow;
 shared_ptr<Sprite> g_gumpBackground;
 shared_ptr<Sprite> g_gumpCheckmarkUp;
 shared_ptr<Sprite> g_gumpCheckmarkDown;
+
+shared_ptr<Sprite> g_GitHubButton;
+shared_ptr<Sprite> g_XButton;
+shared_ptr<Sprite> g_YouTubeButton;
+shared_ptr<Sprite> g_PatreonButton;
+shared_ptr<Sprite> g_KoFiButton;
 
 Camera g_camera = { 0 };
 
@@ -590,3 +597,25 @@ bool WasRMBDoubleClicked()
 
 	return false;
 }
+
+void OpenURL(const std::string& url)
+{
+    #ifdef __linux__
+        std::string command = "xdg-open " + url;
+    #elif _WIN32
+        std::string command = "start " + url;
+    #elif __APPLE__
+        std::string command = "open " + url;
+    #else
+        return; // Unsupported platform
+    #endif
+    std::system(command.c_str());
+}
+
+
+// int l_add_dialogue(lua_State* L)
+// {
+// 	const char* message = luaL_checkstring(L, 1);
+// 	printf("Lua says: %s\n", message);
+// 	return 0;
+// }
